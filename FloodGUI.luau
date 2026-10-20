@@ -11,6 +11,28 @@ local UserInputService = game:GetService("UserInputService")
 local TeleportService = game:GetService("TeleportService")
 local VirtualUser = game:GetService("VirtualUser")
 
+local CREDITS = {
+    {
+        title = "Original project",
+        entries = {
+            { "Voiz", "TAS record and playback" },
+            { "tomato.txt", "Reverse engineering and base GUI" },
+            { "Moz", "Stat tracker concept and misc" },
+        },
+    },
+    {
+        title = "This version",
+        entries = {
+            { "MeDo", "Interface and layout" },
+            { "MeDo", "Difficulty skip list" },
+            { "MeDo", "Discord webhooks" },
+            { "MeDo", "Panic and safety" },
+            { "MeDo", "Changelog" },
+            { "MeDo", "Keybind settings, resizing and self destruct" },
+        },
+    },
+}
+
 local CONFIG = {
     SCRIPT_VERSION_NAME = "Flood GUI v3",
     LATEST_BUILD = 65,
@@ -64,7 +86,7 @@ local Settings = {
     skipUnknown = false,
     lastSeenVersion = "",
     keys = {},
-    webhook = { url = "", complete = true, death = true, failed = true, skipped = false },
+    webhook = { url = "", pingId = "", complete = true, death = true, failed = true, skipped = false },
 }
 
 local function loadSettings()
@@ -85,6 +107,7 @@ local function loadSettings()
     end
     if type(data.webhook) == "table" then
         Settings.webhook.url = tostring(data.webhook.url or "")
+        Settings.webhook.pingId = tostring(data.webhook.pingId or "")
         for _, key in ipairs({ "complete", "death", "failed", "skipped" }) do
             if data.webhook[key] ~= nil then Settings.webhook[key] = data.webhook[key] == true end
         end
@@ -303,7 +326,7 @@ local function applyNoclip()
     end
 end
 
-local function postEmbed(embed)
+local function postEmbed(embed, ping)
     local url = Settings.webhook.url
     if url == "" then return false, "no webhook url" end
     local sender = request or http_request or (syn and syn.request)
@@ -322,11 +345,22 @@ local function postEmbed(embed)
     embed.thumbnail = { url = icon }
     embed.footer = { text = "Flood Escape 2  •  Flood Tracker", icon_url = icon }
     embed.timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+    local payload = { username = "Flood Tracker", avatar_url = icon, embeds = { embed } }
+    if ping then
+        local id = Settings.webhook.pingId:gsub("%D", "")
+        if id ~= "" then
+            payload.content = ("<@%s> **Panic triggered!**"):format(id)
+            payload.allowed_mentions = { users = { id } }
+        else
+            payload.content = "@everyone **Panic triggered!**"
+            payload.allowed_mentions = { parse = { "everyone" } }
+        end
+    end
     local ok, response = pcall(sender, {
         Url = url,
         Method = "POST",
         Headers = { ["Content-Type"] = "application/json" },
-        Body = HttpService:JSONEncode({ username = "Flood Tracker", avatar_url = icon, embeds = { embed } }),
+        Body = HttpService:JSONEncode(payload),
     })
     local status = ok and response and tonumber(response.StatusCode or response.Status)
     return status ~= nil and status >= 200 and status < 300, status
@@ -489,6 +523,15 @@ local function buildUI()
         end,
     })
     secPanic:Label("When armed and another player is in your server, or joins it: your character is killed, auto-play and the script stop, and the interface is removed. A Discord message is sent first if you set a webhook URL.")
+    secPanic:Input({
+        Name = "Ping (Discord user ID)",
+        Placeholder = "blank = @everyone",
+        Default = Settings.webhook.pingId,
+        Callback = function(value)
+            Settings.webhook.pingId = (value:gsub("%D", ""))
+            saveSettings()
+        end,
+    })
     local secServer = tabSafety:Section("Server")
     local serverLabel = secServer:Label("")
     task.spawn(function()
@@ -642,9 +685,16 @@ local function buildUI()
     secScript:Label("Stops auto-play, removes the interface and clears the script from memory. Your settings file stays.")
 
     local tabCredits = UI:Tab("Credits", "♥")
-    local secCredits = tabCredits:Section("Made by")
-    secCredits:Label("TAS record and playback: <b>Voiz</b>\nReverse engineering and base GUI: <b>tomato.txt</b>\nStat tracker concept and misc: <b>Moz</b>\nInterface, skip list, webhooks, panic, changelog, keybind settings and self destruct: <b>MeDo</b>")
-    secCredits:Button({
+    for _, group in ipairs(CREDITS) do
+        local secCredits = tabCredits:Section(group.title)
+        local lines = {}
+        for _, entry in ipairs(group.entries) do
+            table.insert(lines, ("<b>%s</b>  -  %s"):format(entry[1], entry[2]))
+        end
+        secCredits:Label(table.concat(lines, "\n"), Theme.Text)
+    end
+    local secLinks = tabCredits:Section("Links")
+    secLinks:Button({
         Name = "Copy Discord invite",
         Callback = function()
             if setclipboard then
@@ -816,7 +866,7 @@ triggerPanic = function(playerName, mode)
                 { name = "👥 Other players", value = ("`%s`"):format(listed), inline = false },
                 { name = "🌐 Server", value = ("`%s`"):format(game.JobId ~= "" and game.JobId or "unknown"), inline = false },
             },
-        })
+        }, true)
         selfDestruct()
     end)
 end
