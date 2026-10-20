@@ -62,6 +62,7 @@ end
 local Settings = {
     skip = { [1] = false, [2] = false, [3] = false, [4] = false, [5] = true, [6] = true },
     skipUnknown = false,
+    lastSeenVersion = "",
     webhook = { url = "", complete = true, death = true, failed = true, skipped = false },
 }
 
@@ -77,6 +78,7 @@ local function loadSettings()
         end
     end
     Settings.skipUnknown = data.skipUnknown == true
+    Settings.lastSeenVersion = tostring(data.lastSeenVersion or "")
     if type(data.webhook) == "table" then
         Settings.webhook.url = tostring(data.webhook.url or "")
         for _, key in ipairs({ "complete", "death", "failed", "skipped" }) do
@@ -92,7 +94,7 @@ local function saveSettings()
     saveQueued = true
     task.delay(0.4, function()
         saveQueued = false
-        local out = { skip = {}, skipUnknown = Settings.skipUnknown, webhook = Settings.webhook }
+        local out = { skip = {}, skipUnknown = Settings.skipUnknown, lastSeenVersion = Settings.lastSeenVersion, webhook = Settings.webhook }
         for dif, on in pairs(Settings.skip) do out.skip[tostring(dif)] = on end
         pcall(writefile, CONFIG.SETTINGS_FILE, HttpService:JSONEncode(out))
     end)
@@ -117,6 +119,51 @@ local Theme = FloodUI.Theme
 
 local function notify(title, text, color, duration)
     UI:Notify(title, text, color, duration)
+end
+
+local function versionParts(version)
+    local parts = {}
+    for number in tostring(version):gmatch("%d+") do table.insert(parts, tonumber(number)) end
+    return parts
+end
+
+local function newerVersion(a, b)
+    local pa, pb = versionParts(a.version), versionParts(b.version)
+    for i = 1, math.max(#pa, #pb) do
+        local x, y = pa[i] or 0, pb[i] or 0
+        if x ~= y then return x > y end
+    end
+    return false
+end
+
+local function parseChangelog(raw)
+    local entries = {}
+    local ok, data = pcall(function() return HttpService:JSONDecode(raw) end)
+    if ok and type(data) == "table" then
+        if data.Version or data.version then data = { data } end
+        for _, entry in ipairs(data) do
+            if type(entry) == "table" then
+                table.insert(entries, {
+                    version = tostring(entry.Version or entry.version or "?"),
+                    text = tostring(entry.text or entry.Text or ""),
+                    date = tostring(entry.date or entry.Date or ""),
+                })
+            end
+        end
+    else
+        local current
+        for key, value in raw:gmatch('([%w_]+)%s*:%s*"(.-)"%s*;?') do
+            key = key:lower()
+            if key == "version" then
+                current = { version = value, text = "", date = "" }
+                table.insert(entries, current)
+            elseif current and (key == "text" or key == "date") then
+                current[key] = value
+            end
+        end
+    end
+    table.sort(entries, newerVersion)
+    return entries
 end
 
 local function loadFE2Library()
@@ -458,6 +505,31 @@ local function buildUI()
             loadstring(game:HttpGet("https://raw.githubusercontent.com/edgeiy/infiniteyield/master/source"))()
         end,
     })
+
+    local tabLog = UI:Tab("Changelog", "📝")
+    local secLog = tabLog:Section("What's new")
+    local logLabel = secLog:Label("Loading...")
+    task.spawn(function()
+        local ok, raw = pcall(game.HttpGet, game, REPO_BASE .. "changelogs.json")
+        local entries = ok and parseChangelog(raw) or {}
+        if #entries == 0 then
+            logLabel:Set("No changelog available right now.")
+            return
+        end
+        local lines = {}
+        for _, entry in ipairs(entries) do
+            local header = ("<b>v%s</b>"):format(entry.version)
+            if entry.date ~= "" then header = header .. "  •  " .. entry.date end
+            table.insert(lines, header .. "\n" .. entry.text)
+        end
+        logLabel:Set(table.concat(lines, "\n\n"), Theme.Text)
+        local latest = entries[1]
+        if Settings.lastSeenVersion ~= latest.version then
+            notify("What's new in v" .. latest.version, latest.text, Theme.Accent, 8)
+            Settings.lastSeenVersion = latest.version
+            saveSettings()
+        end
+    end)
 
     local tabCredits = UI:Tab("Credits", "♥")
     local secCredits = tabCredits:Section("Made by")
