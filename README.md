@@ -6,7 +6,7 @@ Originally made from https://github.com/tomatotxt/Flood-GUI
 ## Run it
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/MeDorel/Flood-GUI/refs/heads/main/FloodGUI.luau"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/MeDorel/Flood-GUI/main/FloodGUI.luau"))()
 ```
 
 ## Features
