@@ -22,6 +22,10 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/MeDorel/Flood-GUI/mai
 
 Press **J** to hide or show the window.
 
+## Discord
+
+Join the server for updates and support: https://discord.gg/fStqfvKRya
+
 ## Credits
 
 TAS record and playback by Voiz. Reverse engineering and the original GUI by tomato.txt. Stat tracker concept by Moz.

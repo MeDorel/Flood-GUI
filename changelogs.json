@@ -1,5 +1,13 @@
 [
   {
+    "Version": "1.2",
+    "date": "10/20/26",
+    "text": [
+      "fixed inf loading on skipped difficulty",
+	  "fixed stats not updating on webhook but does after reset or death"
+    ]
+  },
+  {
     "Version": "1.1",
     "date": "10/20/26",
     "text": [
