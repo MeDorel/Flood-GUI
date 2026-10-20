@@ -1,3 +1,19 @@
-Version:"1.0";
-text:"Hello Everyone! welcome to fe2 gui";
-date:"10/20/26";
+[
+  {
+    "Version": "1.1",
+    "date": "10/20/26",
+    "text": [
+      "New interface with tabs, a resizable window and rebindable keys",
+      "Skip list: avoid Easy, Normal, Hard, Insane, Crazy or Crazy+ maps",
+      "Discord webhooks for completed maps, deaths and failed loads",
+      "Panic: if another player is in your server it kills you, stops the script and pings Discord",
+      "Changelog tab and an automatic outdated script warning",
+      "Self destruct button"
+    ]
+  },
+  {
+    "Version": "1.0",
+    "date": "10/20/26",
+    "text": "Hello Everyone! welcome to fe2 gui"
+  }
+]
