@@ -239,6 +239,7 @@ function Section:Keybind(opts)
 	end)
 	table.insert(self.Window.Keybinds, api)
 	api.Callback = opts.Callback
+	api.OnChanged = opts.OnChanged
 	api.Button = button
 	return api
 end
@@ -270,13 +271,24 @@ function FloodUI.new(opts)
 	self.Gui = gui
 
 	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
-	new("UIScale", { Scale = math.clamp(math.min(viewport.X / 620, viewport.Y / 460), 0.6, 1.1), Parent = gui })
+	new("UIScale", { Scale = math.clamp(math.min(viewport.X / 760, viewport.Y / 500), 0.6, 1.1), Parent = gui })
 
+	local DEFAULT_SIZE = Vector2.new(700, 440)
 	local main = new("Frame", {
-		Name = "Main", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(560, 420),
+		Name = "Main", Position = UDim2.new(0.5, -DEFAULT_SIZE.X / 2, 0.5, -DEFAULT_SIZE.Y / 2), Size = UDim2.fromOffset(DEFAULT_SIZE.X, DEFAULT_SIZE.Y),
 		BackgroundColor3 = THEME.Backdrop, BorderSizePixel = 0, Parent = gui,
 	}, { stroke(Color3.fromRGB(95, 95, 95), 1) })
 	self.Main = main
+	self.DefaultSize = DEFAULT_SIZE
+
+	function self:SetSize(width, height)
+		local ui = gui:FindFirstChildOfClass("UIScale")
+		local s = ui and ui.Scale or 1
+		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+		width = math.clamp(width, 480, math.max(vp.X / s - 20, 480))
+		height = math.clamp(height, 320, math.max(vp.Y / s - 20, 320))
+		main.Size = UDim2.fromOffset(width, height)
+	end
 
 	local titleBar = new("Frame", { Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = THEME.Panel, BorderSizePixel = 0, Parent = main }, {
 		new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = THEME.Stroke, BorderSizePixel = 0 }),
@@ -306,8 +318,12 @@ function FloodUI.new(opts)
 		if isPress(input) then dragging = false end
 	end))
 
-	self.TabBar = new("Frame", { Position = UDim2.fromOffset(0, 25), Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = THEME.Backdrop, BorderSizePixel = 0, Parent = main }, {
-		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 2), HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder }),
+	self.TabBar = new("ScrollingFrame", {
+		Position = UDim2.fromOffset(0, 25), Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = THEME.Backdrop, BorderSizePixel = 0,
+		ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, Parent = main,
+	}, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 2), VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder }),
+		padding(6, 0),
 	})
 
 	self.Pages = new("Frame", { Position = UDim2.fromOffset(0, 50), Size = UDim2.new(1, 0, 1, -72), BackgroundTransparency = 1, ClipsDescendants = true, Parent = main })
@@ -315,7 +331,29 @@ function FloodUI.new(opts)
 	local statusBar = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 20), BackgroundColor3 = THEME.Panel, BorderSizePixel = 0, Parent = main }, {
 		new("Frame", { Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = THEME.Stroke, BorderSizePixel = 0 }),
 	})
-	self.StatusLabel = label({ Text = "Ready", TextSize = 12, TextColor3 = THEME.Muted, Position = UDim2.fromOffset(8, 1), Size = UDim2.new(1, -16, 1, -1), TextTruncate = Enum.TextTruncate.AtEnd, Parent = statusBar })
+	self.StatusLabel = label({ Text = "Ready", TextSize = 12, TextColor3 = THEME.Muted, Position = UDim2.fromOffset(8, 1), Size = UDim2.new(1, -34, 1, -1), TextTruncate = Enum.TextTruncate.AtEnd, Parent = statusBar })
+
+	local grip = new("TextButton", {
+		Text = "=", Rotation = -45, Font = FONT, TextSize = 16, TextColor3 = THEME.Muted, BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromScale(1, 1), Size = UDim2.fromOffset(20, 20), ZIndex = 5, Parent = main,
+	})
+	local resizing, resizeStart, startSize
+	grip.InputBegan:Connect(function(input)
+		if isPress(input) then
+			resizing, resizeStart, startSize = true, input.Position, main.AbsoluteSize
+		end
+	end)
+	table.insert(self.Connections, UserInputService.InputChanged:Connect(function(input)
+		if resizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local ui = gui:FindFirstChildOfClass("UIScale")
+			local s = ui and ui.Scale or 1
+			local delta = input.Position - resizeStart
+			self:SetSize(startSize.X / s + delta.X / s, startSize.Y / s + delta.Y / s)
+		end
+	end))
+	table.insert(self.Connections, UserInputService.InputEnded:Connect(function(input)
+		if isPress(input) then resizing = false end
+	end))
 
 	self.ToastHolder = new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -14, 1, -14), Size = UDim2.fromOffset(280, 400), BackgroundTransparency = 1, Parent = gui }, {
 		new("UIListLayout", { VerticalAlignment = Enum.VerticalAlignment.Bottom, HorizontalAlignment = Enum.HorizontalAlignment.Right, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
@@ -328,6 +366,7 @@ function FloodUI.new(opts)
 				kb.Listening = false
 				kb.Button.TextColor3 = THEME.Muted
 				kb:Set(input.KeyCode ~= Enum.KeyCode.Escape and input.KeyCode or nil)
+				if kb.OnChanged then task.spawn(kb.OnChanged, kb.Value) end
 				return
 			end
 		end

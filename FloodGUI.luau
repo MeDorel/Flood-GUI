@@ -63,6 +63,7 @@ local Settings = {
     skip = { [1] = false, [2] = false, [3] = false, [4] = false, [5] = true, [6] = true },
     skipUnknown = false,
     lastSeenVersion = "",
+    keys = {},
     webhook = { url = "", complete = true, death = true, failed = true, skipped = false },
 }
 
@@ -79,6 +80,9 @@ local function loadSettings()
     end
     Settings.skipUnknown = data.skipUnknown == true
     Settings.lastSeenVersion = tostring(data.lastSeenVersion or "")
+    if type(data.keys) == "table" then
+        for id, name in pairs(data.keys) do Settings.keys[id] = tostring(name) end
+    end
     if type(data.webhook) == "table" then
         Settings.webhook.url = tostring(data.webhook.url or "")
         for _, key in ipairs({ "complete", "death", "failed", "skipped" }) do
@@ -94,7 +98,7 @@ local function saveSettings()
     saveQueued = true
     task.delay(0.4, function()
         saveQueued = false
-        local out = { skip = {}, skipUnknown = Settings.skipUnknown, lastSeenVersion = Settings.lastSeenVersion, webhook = Settings.webhook }
+        local out = { skip = {}, skipUnknown = Settings.skipUnknown, lastSeenVersion = Settings.lastSeenVersion, keys = Settings.keys, webhook = Settings.webhook }
         for dif, on in pairs(Settings.skip) do out.skip[tostring(dif)] = on end
         pcall(writefile, CONFIG.SETTINGS_FILE, HttpService:JSONEncode(out))
     end)
@@ -114,7 +118,27 @@ do
     FloodUI = lib
 end
 
-local UI = FloodUI.new({ Title = "Flood GUI", Subtitle = "Flood Escape 2  •  v3", ToggleKey = Enum.KeyCode.J })
+local function keyFromSettings(id, default)
+    local name = Settings.keys[id]
+    if name == "None" then return nil end
+    if name then
+        local ok, key = pcall(function() return Enum.KeyCode[name] end)
+        if ok and key then return key end
+    end
+    return default
+end
+
+local selfDestruct, triggerPanic
+
+local function otherPlayerNames()
+    local names = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then table.insert(names, player.Name) end
+    end
+    return names
+end
+
+local UI = FloodUI.new({ Title = "Flood GUI", Subtitle = "Flood Escape 2  •  v3", ToggleKey = keyFromSettings("ui", Enum.KeyCode.J) or Enum.KeyCode.J })
 local Theme = FloodUI.Theme
 
 local function notify(title, text, color, duration)
@@ -279,17 +303,11 @@ local function applyNoclip()
     end
 end
 
-local function sendTestWebhook()
+local function postEmbed(embed)
     local url = Settings.webhook.url
-    if url == "" then
-        notify("Webhook", "Paste your webhook URL first.", Theme.Warn)
-        return
-    end
+    if url == "" then return false, "no webhook url" end
     local sender = request or http_request or (syn and syn.request)
-    if not sender then
-        notify("Webhook", "Your executor has no request function.", Theme.Bad)
-        return
-    end
+    if not sender then return false, "no request function" end
     local icon = getgenv().FloodHeadshot
     if not icon then
         local ok, body = pcall(game.HttpGet, game, ("https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=420x420&format=Png&isCircular=false"):format(LocalPlayer.UserId))
@@ -297,30 +315,37 @@ local function sendTestWebhook()
             local okJson, data = pcall(HttpService.JSONDecode, HttpService, body)
             icon = okJson and data and data.data and data.data[1] and data.data[1].imageUrl
         end
+        icon = icon or ("https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=420&height=420&format=png"):format(LocalPlayer.UserId)
+        getgenv().FloodHeadshot = icon
     end
+    embed.author = { name = ("%s (@%s)"):format(LocalPlayer.DisplayName, LocalPlayer.Name), url = "https://www.roblox.com/users/" .. LocalPlayer.UserId .. "/profile", icon_url = icon }
+    embed.thumbnail = { url = icon }
+    embed.footer = { text = "Flood Escape 2  •  Flood Tracker", icon_url = icon }
+    embed.timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
     local ok, response = pcall(sender, {
         Url = url,
         Method = "POST",
         Headers = { ["Content-Type"] = "application/json" },
-        Body = HttpService:JSONEncode({
-            username = "Flood Tracker",
-            avatar_url = icon,
-            embeds = { {
-                title = "✅  Webhook connected",
-                description = "Flood GUI will send map results, deaths and load failures here.",
-                color = 0x38A0FF,
-                author = { name = ("%s (@%s)"):format(LocalPlayer.DisplayName, LocalPlayer.Name), icon_url = icon },
-                thumbnail = { url = icon },
-                footer = { text = "Flood Escape 2  •  Flood Tracker" },
-                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-            } },
-        }),
+        Body = HttpService:JSONEncode({ username = "Flood Tracker", avatar_url = icon, embeds = { embed } }),
     })
     local status = ok and response and tonumber(response.StatusCode or response.Status)
-    if status and status >= 200 and status < 300 then
+    return status ~= nil and status >= 200 and status < 300, status
+end
+
+local function sendTestWebhook()
+    if Settings.webhook.url == "" then
+        notify("Webhook", "Paste your webhook URL first.", Theme.Warn)
+        return
+    end
+    local ok, status = postEmbed({
+        title = "✅  Webhook connected",
+        description = "Flood GUI will send map results, deaths and load failures here.",
+        color = 0x38A0FF,
+    })
+    if ok then
         notify("Webhook", "Test message sent.", Theme.Good)
     else
-        notify("Webhook", "Discord rejected it (status " .. tostring(status) .. "). Check the URL.", Theme.Bad, 6)
+        notify("Webhook", "Discord rejected it (" .. tostring(status) .. "). Check the URL.", Theme.Bad, 6)
     end
 end
 
@@ -443,6 +468,41 @@ local function buildUI()
     hookToggle("A map is skipped", "Off by default so it does not get noisy.", "skipped")
     tabHook:Section("Notes"):Label("Your URL is only stored in Flood-GUI/settings.json on this computer. Never share it: anyone with it can post in your channel.")
 
+    local tabSafety = UI:Tab("Safety", "!")
+    local secPanic = tabSafety:Section("Panic")
+    secPanic:Toggle({
+        Name = "Panic",
+        Description = "Another player in your server: kill, stop, message.",
+        Color = Theme.Bad,
+        Callback = function(on)
+            State.PanicEnabled = on
+            if on then
+                local others = otherPlayerNames()
+                if #others > 0 then
+                    triggerPanic(others[1], "present")
+                else
+                    notify("Panic armed", "Nobody else is in the server right now.", Theme.Good)
+                end
+            else
+                notify("Panic", "Disarmed.", Theme.Muted)
+            end
+        end,
+    })
+    secPanic:Label("When armed and another player is in your server, or joins it: your character is killed, auto-play and the script stop, and the interface is removed. A Discord message is sent first if you set a webhook URL.")
+    local secServer = tabSafety:Section("Server")
+    local serverLabel = secServer:Label("")
+    task.spawn(function()
+        while UI.Gui and UI.Gui.Parent do
+            local others = otherPlayerNames()
+            if #others == 0 then
+                serverLabel:Set("You are alone in this server.", Theme.Good)
+            else
+                serverLabel:Set(("<b>%d</b> other player(s): %s"):format(#others, table.concat(others, ", ")), Theme.Warn)
+            end
+            task.wait(1)
+        end
+    end)
+
     local tabPlayer = UI:Tab("Player", "🏃")
     local secMove = tabPlayer:Section("Movement")
     secMove:Slider({
@@ -455,10 +515,10 @@ local function buildUI()
     })
 
     local tabBlatant = UI:Tab("Blatant", "⚡")
-    local secBlatant = tabBlatant:Section("Toggles and keybinds")
-    local function blatant(name, description, default, stateKey, after)
-        local toggle
-        toggle = secBlatant:Toggle({
+    local secBlatant = tabBlatant:Section("Toggles")
+    local keybindSpecs = {}
+    local function blatant(name, description, id, default, stateKey, after)
+        local toggle = secBlatant:Toggle({
             Name = name,
             Description = description,
             Callback = function(on)
@@ -466,16 +526,12 @@ local function buildUI()
                 if after then after() end
             end,
         })
-        secBlatant:Keybind({
-            Name = name .. " key",
-            Default = default,
-            Callback = function() toggle:Set(not toggle.Value) end,
-        })
+        table.insert(keybindSpecs, { Name = name, Id = id, Default = default, Toggle = toggle })
     end
-    blatant("Infinite Air", "Stops you from drowning.", Enum.KeyCode.R, "GodModeEnabled")
-    blatant("Noclip", "Walk through walls.", Enum.KeyCode.G, "NoclipEnabled", applyNoclip)
-    blatant("Air Jump", "Jump again while in the air.", Enum.KeyCode.M, "AirJumpEnabled")
-    blatant("TAS Swim Mode", "For TAS recording: pretends you are in lobby water.", Enum.KeyCode.T, "SwimEnabled")
+    blatant("Infinite Air", "Stops you from drowning.", "god", Enum.KeyCode.R, "GodModeEnabled")
+    blatant("Noclip", "Walk through walls.", "noclip", Enum.KeyCode.G, "NoclipEnabled", applyNoclip)
+    blatant("Air Jump", "Jump again while in the air.", "air", Enum.KeyCode.M, "AirJumpEnabled")
+    blatant("TAS Swim Mode", "For TAS recording: pretends you are in lobby water.", "swim", Enum.KeyCode.T, "SwimEnabled")
 
     local tabTools = UI:Tab("Tools", "🛠")
     local secTools = tabTools:Section("Utilities")
@@ -531,9 +587,63 @@ local function buildUI()
         end
     end)
 
+    local tabSettings = UI:Tab("Settings", "*")
+    local secInterface = tabSettings:Section("Interface")
+    local interfaceKey
+    interfaceKey = secInterface:Keybind({
+        Name = "Show / hide window",
+        Default = UI.ToggleKey,
+        OnChanged = function(key)
+            if not key then
+                key = Enum.KeyCode.J
+                interfaceKey:Set(key)
+            end
+            UI.ToggleKey = key
+            Settings.keys.ui = key.Name
+            saveSettings()
+        end,
+    })
+    secInterface:Label("Drag the = in the bottom right corner to resize the window.")
+    secInterface:Button({
+        Name = "Reset window size",
+        Callback = function() UI:SetSize(UI.DefaultSize.X, UI.DefaultSize.Y) end,
+    })
+    local secKeys = tabSettings:Section("Keybinds")
+    secKeys:Label("Click a key, then press the new one. Escape clears it.")
+    for _, spec in ipairs(keybindSpecs) do
+        secKeys:Keybind({
+            Name = spec.Name,
+            Default = keyFromSettings(spec.Id, spec.Default),
+            Callback = function() spec.Toggle:Set(not spec.Toggle.Value) end,
+            OnChanged = function(key)
+                Settings.keys[spec.Id] = key and key.Name or "None"
+                saveSettings()
+            end,
+        })
+    end
+    local secScript = tabSettings:Section("Script")
+    local confirmUntil = 0
+    local destroyButton
+    destroyButton = secScript:Button({
+        Name = "Self destruct",
+        Color = Color3.fromRGB(90, 30, 30),
+        Callback = function()
+            if os.clock() > confirmUntil then
+                confirmUntil = os.clock() + 3
+                destroyButton.Text = "Click again to confirm"
+                task.delay(3, function()
+                    if destroyButton.Parent then destroyButton.Text = "Self destruct" end
+                end)
+                return
+            end
+            selfDestruct()
+        end,
+    })
+    secScript:Label("Stops auto-play, removes the interface and clears the script from memory. Your settings file stays.")
+
     local tabCredits = UI:Tab("Credits", "♥")
     local secCredits = tabCredits:Section("Made by")
-    secCredits:Label("TAS record and playback: <b>Voiz</b>\nReverse engineering and base GUI: <b>tomato.txt</b>\nStat tracker concept and misc: <b>Moz</b>\nInterface, skip list and webhooks: this version")
+    secCredits:Label("TAS record and playback: <b>Voiz</b>\nReverse engineering and base GUI: <b>tomato.txt</b>\nStat tracker concept and misc: <b>Moz</b>\nInterface, skip list, webhooks, panic, changelog, keybind settings and self destruct: <b>MeDo</b>")
     secCredits:Button({
         Name = "Copy Discord invite",
         Callback = function()
@@ -570,7 +680,12 @@ local function setupEventHandlers()
     end)
 
     connect(Players.PlayerAdded, function(player)
-        if State.AutoLeaveEnabled and player ~= LocalPlayer then
+        if player == LocalPlayer then return end
+        if State.PanicEnabled then
+            triggerPanic(player.Name, "joined")
+            return
+        end
+        if State.AutoLeaveEnabled then
             notify("Auto-Leave", ("%s joined. Leaving."):format(player.Name), Theme.Warn)
             task.wait(0.5)
             pcall(LocalPlayer.Kick, LocalPlayer, "Flood GUI: Auto-Leave triggered by player joining.")
@@ -639,6 +754,70 @@ local function runAutoCollectLoop()
                 end
             end
         end
+    end)
+end
+
+local panicFired = false
+
+local function stopAutoPlay()
+    State.AutoPlayEnabled = false
+    State.AutoCollectEnabled = false
+    getgenv().IsTASPlaying = false
+    local connections = getgenv().TASConnections
+    if connections then
+        for _, c in pairs(connections) do pcall(function() c:Disconnect() end) end
+        getgenv().TASConnections = {}
+    end
+    if getgenv().TAS_RestoreAnim then
+        pcall(getgenv().TAS_RestoreAnim)
+        getgenv().TAS_RestoreAnim = nil
+    end
+    local tasGui = PlayerGui:FindFirstChild("TAS_GUI")
+    if tasGui then tasGui:Destroy() end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.AutoRotate = true end
+end
+
+selfDestruct = function()
+    alive = false
+    State.GodModeEnabled = false
+    State.NoclipEnabled = false
+    State.AirJumpEnabled = false
+    State.SwimEnabled = false
+    State.PanicEnabled = false
+    stopAutoPlay()
+    for _, key in ipairs({ "FloodSettings", "FloodSkipMap", "FloodSession", "FloodWebhookQueue", "FloodHeadshot", "FloodRepoBase", "FloodConfig", "State" }) do
+        getgenv()[key] = nil
+    end
+    UI:Destroy()
+end
+
+triggerPanic = function(playerName, mode)
+    if panicFired then return end
+    panicFired = true
+    local others = otherPlayerNames()
+    stopAutoPlay()
+    local char = LocalPlayer.Character
+    pcall(function()
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.Health = 0 end
+        if char then char:BreakJoints() end
+    end)
+    task.delay(8, selfDestruct)
+    task.spawn(function()
+        local listed = #others > 0 and table.concat(others, ", ") or playerName
+        postEmbed({
+            title = "🚨  Panic triggered",
+            description = (mode == "joined" and "**%s** joined your server." or "**%s** was in your server."):format(playerName)
+                .. "\nYour character was killed and the script shut itself down.",
+            color = 0xED4245,
+            fields = {
+                { name = "👥 Other players", value = ("`%s`"):format(listed), inline = false },
+                { name = "🌐 Server", value = ("`%s`"):format(game.JobId ~= "" and game.JobId or "unknown"), inline = false },
+            },
+        })
+        selfDestruct()
     end)
 end
 
